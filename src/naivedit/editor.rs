@@ -1,54 +1,26 @@
-use std::io::{BufRead, BufReader, Stdout, Write};
+use std::io::{Stdout, Write};
 use termion::{event::Key, raw::RawTerminal};
 
-#[derive(Debug, Clone, Copy)]
-pub enum Mode {
-    Insert,  // insert mode
-    Base,    // base mode
-    Command, // command input mode
-}
-
-#[derive(Debug, Clone)]
-struct Row {
-    text: String,
-    len: usize,
-}
-
-impl Row {
-    pub fn new() -> Row {
-        Row {
-            text: String::new(),
-            len: 0,
-        }
-    }
-}
+use super::lib::{read_file, write_file, CurMov, Mode, Row};
 
 pub struct Editor<'a> {
     mode: Mode,
     buffer: Vec<Row>,
     cursor: (usize, usize),
+    indent: usize,
     size: (usize, usize),
     stdout: &'a mut RawTerminal<Stdout>,
     full: bool,
-    name: Option<String>,
+    name: Option<&'a str>,
     cmd: Vec<char>,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum CurMov {
-    Up,
-    Down,
-    Left,
-    Right,
-    Goto(usize, usize),
-}
-
 impl Editor<'_> {
-    pub fn new<'a>(name: Option<String>, stdout: &'a mut RawTerminal<Stdout>) -> Editor<'a> {
+    pub fn new<'a>(name: Option<&'a str>, stdout: &'a mut RawTerminal<Stdout>) -> Editor<'a> {
         let sz = termion::terminal_size().unwrap();
         let mut buffer = Vec::new();
-        if let Some(n) = name.clone() {
-            read_file(n.as_str(), &mut buffer).unwrap_or_else(|_| {
+        if let Some(n) = name {
+            read_file(n, &mut buffer).unwrap_or_else(|_| {
                 buffer.clear();
                 buffer.push(Row::new())
             });
@@ -59,6 +31,7 @@ impl Editor<'_> {
             mode: Mode::Base,
             buffer: buffer,
             cursor: (1, 1),
+            indent: 0,
             size: (sz.0 as usize, sz.1 as usize),
             stdout: stdout,
             full: false,
@@ -137,9 +110,10 @@ impl Editor<'_> {
             }
             Mode::Base => write!(
                 self.stdout,
-                "{}{}BASE MODE",
+                "{}{}BASE MODE{}",
                 termion::cursor::Goto(1, 1),
-                termion::clear::CurrentLine
+                termion::clear::CurrentLine,
+                termion::cursor::Goto(self.cursor.0 as u16, (self.cursor.1 + 1) as u16)
             )
             .unwrap(),
             Mode::Command => {
@@ -202,6 +176,10 @@ impl Editor<'_> {
         match key {
             Key::Char('i') => self.mode = Mode::Insert,
             Key::Char(':') => self.mode = Mode::Command,
+            Key::Up => self.update_cursor(CurMov::Up),
+            Key::Down => self.update_cursor(CurMov::Down),
+            Key::Left => self.update_cursor(CurMov::Left),
+            Key::Right => self.update_cursor(CurMov::Right),
             _ => (),
         }
     }
@@ -215,6 +193,9 @@ impl Editor<'_> {
             Key::Right => self.update_cursor(CurMov::Right),
             Key::Delete | Key::Backspace => {
                 if self.cursor.0 > 1 {
+                    if self.cursor.0 - 1 == self.indent {
+                        self.indent -= 1
+                    }
                     self.buffer[self.cursor.1 - 1]
                         .text
                         .replace_range(self.cursor.0 - 2..self.cursor.0 - 1, "");
@@ -234,8 +215,14 @@ impl Editor<'_> {
             }
             Key::Char('\n') => {
                 if self.cursor.0 == self.buffer[self.cursor.1 - 1].len + 1 {
-                    self.buffer.insert(self.cursor.1, Row::new());
-                    self.update_cursor(CurMov::Goto(1, self.cursor.1 + 1));
+                    self.buffer.insert(
+                        self.cursor.1,
+                        Row {
+                            text: String::from(" ").repeat(self.indent),
+                            len: self.indent,
+                        },
+                    );
+                    self.update_cursor(CurMov::Goto(1 + self.indent, self.cursor.1 + 1));
                 } else {
                     let row = self.buffer[self.cursor.1 - 1].clone();
                     self.buffer[self.cursor.1 - 1]
@@ -244,18 +231,27 @@ impl Editor<'_> {
                     self.buffer[self.cursor.1 - 1].len = self.cursor.0 - 1;
 
                     let new_row = Row {
-                        text: (&row.text[self.cursor.0 - 1..row.len]).to_string(),
-                        len: row.len + 1 - self.cursor.0,
+                        text: String::from(" ").repeat(self.indent)
+                            + &row.text[self.cursor.0 - 1..row.len],
+                        len: row.len + 1 - self.cursor.0 + self.indent,
                     };
                     self.buffer.insert(self.cursor.1, new_row);
-                    self.update_cursor(CurMov::Goto(1, self.cursor.1 + 1));
+                    self.update_cursor(CurMov::Goto(1 + self.indent, self.cursor.1 + 1));
                     self.full = true;
                 }
             }
             Key::Char(c) => {
+                let p = match (self.cursor.0 - 1 == self.indent, *c == '\t') {
+                    (true, true) => {
+                        self.indent += 1;
+                        ' '
+                    }
+                    (false, true) => ' ', // ignoring tab here
+                    _ => *c,
+                };
                 self.buffer[self.cursor.1 - 1]
                     .text
-                    .insert(self.cursor.0 - 1, *c);
+                    .insert(self.cursor.0 - 1, p);
                 self.buffer[self.cursor.1 - 1].len += 1;
                 self.update_cursor(CurMov::Right);
             }
@@ -277,8 +273,8 @@ impl Editor<'_> {
                         "w" => {
                             if let Some(file) = cmd.pop() {
                                 write_file(file, &self.buffer).unwrap();
-                            } else if let Some(file) = &self.name {
-                                write_file(file.as_str(), &self.buffer).unwrap();
+                            } else if let Some(file) = self.name {
+                                write_file(file, &self.buffer).unwrap();
                             }
                         }
                         _ => (),
@@ -298,32 +294,4 @@ impl Editor<'_> {
             _ => (),
         }
     }
-}
-
-fn read_file(name: &str, out: &mut Vec<Row>) -> std::io::Result<()> {
-    let file = std::fs::OpenOptions::new().read(true).open(name)?;
-
-    let reader = BufReader::new(file);
-
-    for line in reader.lines() {
-        let text = line?;
-        let len = text.len();
-        out.push(Row {
-            text: text,
-            len: len,
-        })
-    }
-    Ok(())
-}
-
-fn write_file(name: &str, text: &Vec<Row>) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(name)?;
-    for r in text {
-        file.write(r.text.as_bytes())?;
-        file.write(b"\n")?;
-    }
-    file.flush()
 }
