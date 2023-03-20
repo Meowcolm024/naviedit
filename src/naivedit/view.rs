@@ -1,4 +1,4 @@
-use super::lib::{CurMov, Mode};
+use super::lib::Mode;
 use std::{
     cmp::{self},
     io::{Stdout, Write},
@@ -9,7 +9,7 @@ pub struct View<'a> {
     stdout: &'a mut RawTerminal<Stdout>,
     size: (usize, usize),   // size of the terminal
     cursor: (usize, usize), // cursor position
-    full_update: bool,
+    frame: (usize, usize),  // top-left corner of the text view frame
 }
 
 impl View<'_> {
@@ -18,7 +18,7 @@ impl View<'_> {
             stdout,
             size,
             cursor: (1, 2),
-            full_update: false,
+            frame: (1, 2),
         }
     }
 
@@ -36,8 +36,23 @@ impl View<'_> {
     }
 
     pub fn clear(&mut self) -> std::io::Result<()> {
-        write!(self.stdout, "{}", termion::clear::All)?;
+        write!(
+            self.stdout,
+            "{}{}",
+            termion::cursor::Goto(1, 1),
+            termion::clear::All,
+        )?;
         self.stdout.flush()?;
+        Ok(())
+    }
+
+    fn clear_line(&mut self) -> std::io::Result<()> {
+        write!(
+            self.stdout,
+            "{}{}",
+            termion::cursor::Goto(self.cursor.0 as u16, self.cursor.1 as u16),
+            termion::clear::CurrentLine
+        )?;
         Ok(())
     }
 
@@ -81,8 +96,13 @@ impl View<'_> {
 
         if self.cursor.1 != self.size.1 {
             self.cursor.1 = 2;
-            for i in 0..(cmp::min(buffer.len(), self.size.1 - 1)) {
+            let l = cmp::min(buffer.len(), self.size.1 - 1);
+            for i in 0..l {
                 self.render_line(focus, &buffer[i])?;
+                self.cursor.1 += 1;
+            }
+            for _ in l..self.size.1 {
+                self.clear_line()?;
                 self.cursor.1 += 1;
             }
         } else {
@@ -133,11 +153,10 @@ impl View<'_> {
             )?,
             Mode::Base => write!(
                 self.stdout,
-                "{}{}BASE MODE{:?}{:?}{}",
+                "{}{}BASE MODE{:?}{}",
                 termion::cursor::Goto(1, 1),
                 termion::clear::CurrentLine,
                 self.cursor,
-                self.size,
                 termion::cursor::Goto(self.cursor.0 as u16, self.cursor.1 as u16)
             )?,
             Mode::Command => self.render_command(cmd_buffer)?,

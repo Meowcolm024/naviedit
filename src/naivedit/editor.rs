@@ -66,7 +66,7 @@ impl Editor<'_> {
                 }
             }
             CurMov::Down => {
-                if self.focus.1 < self.buffer.len() {
+                if self.focus.1 < self.buffer.len() - 1 {
                     self.focus.1 += 1;
                     if self.focus.0 >= self.buffer[self.focus.1].len() {
                         self.focus.0 = self.buffer[self.focus.1].len();
@@ -84,7 +84,7 @@ impl Editor<'_> {
                 }
             }
             CurMov::Goto(x, y) => {
-                assert!(y < self.buffer.len() && x < self.buffer[y].len());
+                assert!(y < self.buffer.len() && x <= self.buffer[y].len());
                 self.focus.0 = x;
                 self.focus.1 = y;
             }
@@ -95,14 +95,14 @@ impl Editor<'_> {
     pub fn key_handle(&mut self, key: &Key) {
         match self.mode {
             Mode::Base => self.base_mode(key),
-            Mode::Insert => {}
+            Mode::Insert => self.insert_mode(key),
             Mode::Command => self.command_mode(key),
         }
     }
 
     fn base_mode(&mut self, key: &Key) {
         match key {
-            // Key::Char('i') => self.mode = Mode::Insert,
+            Key::Char('i') => self.mode = Mode::Insert,
             Key::Char(':') => self.mode = Mode::Command,
             Key::Up => self.update_focus(CurMov::Up),
             Key::Down => self.update_focus(CurMov::Down),
@@ -112,82 +112,41 @@ impl Editor<'_> {
         }
     }
 
-    /*
-        fn insert_mode(&mut self, key: &Key) {
-            match key {
-                Key::Esc => self.mode = Mode::Base,
-                Key::Up => self.update_cursor(CurMov::Up),
-                Key::Down => self.update_cursor(CurMov::Down),
-                Key::Left => self.update_cursor(CurMov::Left),
-                Key::Right => self.update_cursor(CurMov::Right),
-                Key::Delete | Key::Backspace => {
-                    if self.cursor.0 > 1 {
-                        if self.cursor.0 - 1 == self.indent {
-                            self.indent -= 1
-                        }
-                        self.buffer[self.cursor.1 - 1]
-                            .text
-                            .replace_range(self.cursor.0 - 2..self.cursor.0 - 1, "");
-                        self.buffer[self.cursor.1 - 1].len -= 1;
-                        self.update_cursor(CurMov::Left);
-                    } else if self.cursor.0 == 1 && self.cursor.1 > 1 {
-                        let cur = self.buffer[self.cursor.1 - 1].text.clone();
-                        self.buffer[self.cursor.1 - 2].text += cur.as_str();
-                        self.buffer[self.cursor.1 - 2].len += cur.len();
-                        self.buffer.remove(self.cursor.1 - 1);
-                        self.update_cursor(CurMov::Goto(
-                            self.buffer[self.cursor.1 - 2].len - cur.len() + 1,
-                            self.cursor.1 - 1,
-                        ));
-                        self.full = true;
-                    }
+    fn insert_mode(&mut self, key: &Key) {
+        match key {
+            Key::Esc => self.mode = Mode::Base,
+            Key::Up => self.update_focus(CurMov::Up),
+            Key::Down => self.update_focus(CurMov::Down),
+            Key::Left => self.update_focus(CurMov::Left),
+            Key::Right => self.update_focus(CurMov::Right),
+            Key::Delete | Key::Backspace => {
+                if self.focus.0 > 0 {
+                    self.buffer[self.focus.1].replace_range(self.focus.0 - 1..self.focus.0, "");
+                    self.update_focus(CurMov::Left);
+                } else if self.focus.0 == 0 && self.focus.1 > 0 {
+                    let cur = self.buffer[self.focus.1].clone();
+                    self.buffer[self.focus.1 - 1] += cur.as_str();
+                    self.update_focus(CurMov::Goto(
+                        self.buffer[self.focus.1 - 1].len() - cur.len(),
+                        self.focus.1 - 1,
+                    ));
+                    self.buffer.remove(self.focus.1 + 1);
                 }
-                Key::Char('\n') => {
-                    if self.cursor.0 == self.buffer[self.cursor.1 - 1].len + 1 {
-                        self.buffer.insert(
-                            self.cursor.1,
-                            Row {
-                                text: String::from(" ").repeat(self.indent),
-                                len: self.indent,
-                            },
-                        );
-                        self.update_cursor(CurMov::Goto(1 + self.indent, self.cursor.1 + 1));
-                    } else {
-                        let row = self.buffer[self.cursor.1 - 1].clone();
-                        self.buffer[self.cursor.1 - 1]
-                            .text
-                            .truncate(self.cursor.0 - 1);
-                        self.buffer[self.cursor.1 - 1].len = self.cursor.0 - 1;
-
-                        let new_row = Row {
-                            text: String::from(" ").repeat(self.indent)
-                                + &row.text[self.cursor.0 - 1..row.len],
-                            len: row.len + 1 - self.cursor.0 + self.indent,
-                        };
-                        self.buffer.insert(self.cursor.1, new_row);
-                        self.update_cursor(CurMov::Goto(1 + self.indent, self.cursor.1 + 1));
-                        self.full = true;
-                    }
-                }
-                Key::Char(c) => {
-                    let p = match (self.cursor.0 - 1 == self.indent, *c == '\t') {
-                        (true, true) => {
-                            self.indent += 1;
-                            ' '
-                        }
-                        (false, true) => ' ', // ignoring tab here
-                        _ => *c,
-                    };
-                    self.buffer[self.cursor.1 - 1]
-                        .text
-                        .insert(self.cursor.0 - 1, p);
-                    self.buffer[self.cursor.1 - 1].len += 1;
-                    self.update_cursor(CurMov::Right);
-                }
-                _ => (),
             }
+            Key::Char('\n') => {
+                let row = self.buffer[self.focus.1].clone();
+                self.buffer[self.focus.1].truncate(self.focus.0);
+                let new_row = String::from(&row[self.focus.0..row.len()]);
+                self.buffer.insert(self.focus.1 + 1, new_row);
+                self.update_focus(CurMov::Goto(0, self.focus.1 + 1));
+            }
+            Key::Char(c) => {
+                self.buffer[self.focus.1].insert(self.focus.0, *c);
+                self.update_focus(CurMov::Right);
+            }
+            _ => (),
         }
-    */
+    }
 
     fn command_mode(&mut self, key: &Key) {
         match key {

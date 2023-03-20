@@ -1,5 +1,3 @@
-use super::lib::Mode;
-
 pub struct State {
     indent: usize,
 }

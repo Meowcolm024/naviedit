@@ -33,13 +33,11 @@ pub enum CurMov {
 
 pub fn read_file(name: &str, out: &mut Vec<String>) -> std::io::Result<()> {
     let file = std::fs::OpenOptions::new().read(true).open(name)?;
-
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
         let text = line?;
-        let len = text.len();
-        out.push(text)
+        out.push(text);
     }
     Ok(())
 }
@@ -53,5 +51,6 @@ pub fn write_file(name: &str, text: &Vec<String>) -> std::io::Result<()> {
         file.write(r.as_bytes())?;
         file.write(b"\n")?;
     }
-    file.flush()
+    file.flush()?;
+    Ok(())
 }
