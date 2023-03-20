@@ -31,7 +31,7 @@ pub enum CurMov {
     Goto(usize, usize),
 }
 
-pub fn read_file(name: &str, out: &mut Vec<Row>) -> std::io::Result<()> {
+pub fn read_file(name: &str, out: &mut Vec<String>) -> std::io::Result<()> {
     let file = std::fs::OpenOptions::new().read(true).open(name)?;
 
     let reader = BufReader::new(file);
@@ -39,21 +39,18 @@ pub fn read_file(name: &str, out: &mut Vec<Row>) -> std::io::Result<()> {
     for line in reader.lines() {
         let text = line?;
         let len = text.len();
-        out.push(Row {
-            text: text,
-            len: len,
-        })
+        out.push(text)
     }
     Ok(())
 }
 
-pub fn write_file(name: &str, text: &Vec<Row>) -> std::io::Result<()> {
+pub fn write_file(name: &str, text: &Vec<String>) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .open(name)?;
     for r in text {
-        file.write(r.text.as_bytes())?;
+        file.write(r.as_bytes())?;
         file.write(b"\n")?;
     }
     file.flush()
